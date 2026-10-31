@@ -2,19 +2,16 @@
 Implementation of xpans' Headphones rendering mode
 */
 pub mod distance;
-pub mod hrtf;
 pub mod pan_law;
 
 use crate::distance::{DistanceCurve, normalize_distance};
-use crate::hrtf::Hrtf;
 use crate::pan_law::PanLaw;
 use core::marker::PhantomData;
 use nalgebra::{SimdRealField, Vector3};
 use num::{Float, FromPrimitive, cast::AsPrimitive};
 use xpans::{Extent, Position};
 use xpans_common_lr::{FlipSign, gain};
-use xpans_render::input::SampleRate;
-use xpans_render::prelude::*;
+use xpans_render::mode::*;
 
 /// The source interpreter for the headphone rendering mode.
 #[derive(Default)]
@@ -31,8 +28,7 @@ impl<T> Interpreter<T> {
 
 /// The sample processor for the headphone rendering mode.
 #[derive(Default)]
-pub struct Processor<T, Law, D, H> {
-    hrtf: H,
+pub struct Processor<T, Law, D> {
     max_itd_nanos: u32,
     distance_curve: D,
     distance_effect: T,
@@ -40,10 +36,9 @@ pub struct Processor<T, Law, D, H> {
     max_distance: T,
     pan_law: Law,
 }
-impl<T: Float, Law, D: DistanceCurve<T>, H> Processor<T, Law, D, H> {
+impl<T: Float, Law, D: DistanceCurve<T>> Processor<T, Law, D> {
     /// Creates a new headphone sample processor.
     pub fn new(
-        hrtf: H,
         pan_law: Law,
         max_itd_nanos: u32,
         distance_curve: D,
@@ -52,7 +47,6 @@ impl<T: Float, Law, D: DistanceCurve<T>, H> Processor<T, Law, D, H> {
         max_distance: T,
     ) -> Self {
         Self {
-            hrtf,
             pan_law,
             max_itd_nanos,
             distance_curve,
@@ -103,15 +97,6 @@ impl<T: Float, Law, D: DistanceCurve<T>, H> Processor<T, Law, D, H> {
     fn apply_distance_curve(&self, distance: T) -> T {
         self.distance_curve.distance_curve(distance)
     }
-    pub fn hrtf(&self) -> &H {
-        &self.hrtf
-    }
-    pub fn hrtf_mut(&mut self) -> &mut H {
-        &mut self.hrtf
-    }
-    pub fn set_hrtf(&mut self, hrtf: H) {
-        self.hrtf = hrtf;
-    }
 }
 
 /// The interpretation type for the headphone rendering mode.
@@ -141,73 +126,101 @@ impl<T> Interpretation<T> {
     }
 }
 
-impl<T> InterpretationLength for Interpreter<T> {
+impl<T: Default> InterpretationInfo for Interpreter<T> {
+    type Interpretation = Interpretation<T>;
+
     fn interpretation_length(&self) -> usize {
         1
     }
 }
 
-impl<Source, T> InterpretSource<Source> for Interpreter<T>
+impl<S, I, T> InterpretSources<S, I> for Interpreter<T>
 where
-    Source: Position<T> + Extent<T>,
-    T: SimdRealField + Copy + From<f32>,
+    S: Sources,
+    S::Source: Position<T> + Extent<T>,
+    T: SimdRealField + Copy + Default + From<f32>,
+    I: Interpretations<Interpretation<T>>,
 {
-    type Interpretation = Interpretation<T>;
+    fn interpret_sources(&mut self, sources: &S, interpretations: &mut I) {
+        for frame in 0..sources.frames() {
+            for source in 0..sources.sources() {
+                let src = sources.get(frame, source);
+                let position = Vector3::new(src.pos_x(), src.pos_y(), src.pos_z());
 
-    fn interpret_source(&mut self, source: &Source, result: &mut [Self::Interpretation]) {
-        let position = Vector3::new(source.pos_x(), source.pos_y(), source.pos_z());
+                let pos_norm = position.normalize();
 
-        let pos_norm = position.normalize();
-        result[0].lr = pos_norm.x;
-        result[0].bf = pos_norm.y;
-        result[0].du = pos_norm.z;
-        let distance = position.magnitude();
-        result[0].distance = distance;
+                let interp = interpretations.get_mut(frame, source, 0);
+
+                interp.lr = pos_norm.x;
+                interp.bf = pos_norm.y;
+                interp.du = pos_norm.z;
+                let distance = position.magnitude();
+                interp.distance = distance;
+            }
+        }
     }
 }
 
-// fn simd_abs<T: SimdRealField>(value: Vector3<T>) -> Vector3<T> {
-//     let mut result = Vector3::zeros();
-//     for (a, b) in result.iter_mut().zip(value.iter()) {
-//         *a = b.simd_abs();
-//     }
-//     result
-// }
-impl<T, Law, D, H> DelaySamples for Processor<T, Law, D, H> {
+impl<T: Default, Law, D> InterpretationInfo for Processor<T, Law, D> {
+    type Interpretation = Interpretation<T>;
+
+    fn interpretation_length(&self) -> usize {
+        1
+    }
+}
+impl<T, Law, D> DelaySamples for Processor<T, Law, D> {
     fn delay_samples(&self, sample_rate: u32) -> usize {
         calculate_delay_samples(self.max_itd_nanos, sample_rate)
     }
 }
-impl<T, Law, D, H> OutputChannels for Processor<T, Law, D, H> {
+impl<T, Law, D> OutputChannels for Processor<T, Law, D> {
     fn output_channels(&self) -> usize {
         2
     }
 }
 
-impl<T, Law, In, Out, D, H> ProcessSamples<In, Out> for Processor<T, Law, D, H>
+impl<T, Law, I, In, Out, D> ProcessSamples<I, In, Out> for Processor<T, Law, D>
 where
-    Self: Hrtf<T, In>,
     Law: PanLaw<T>,
-    In: FractionalInput<T, T> + SampleRate,
+    In: FractionalIndex<T, T> + SampleRate,
     Out: Output<T>,
-    T: Float + FlipSign + FromPrimitive + 'static,
+    T: Float + FlipSign + FromPrimitive + Default + 'static,
     u32: AsPrimitive<T>,
     D: DistanceCurve<T>,
+    I: Interpretations<Interpretation<T>>,
 {
-    type Interpretation = Interpretation<T>;
-
-    fn process_samples(&mut self, result: &[Interpretation<T>], input: &In, output: &mut Out) {
-        let result = result[0];
-        let sample_pair = self.get_samples(&result, input);
-        for channel in 0u8..2 {
-            let sample = sample_pair[channel as usize];
-            let distance = self.normalize_distance(result.distance);
-            let dm = self.apply_distance_curve(distance) * self.distance_effect();
-            let divergence = T::one() - dm;
-            let gain: T = gain(channel, result.lr * divergence);
-            let gain_attenuated = self.pan_law.attenuate(gain);
-            output.set_channel(usize::from(channel), sample * gain_attenuated);
+    fn process_samples(&mut self, interpretations: &I, input: &In, output: &mut Out) {
+        for frame in 0..input.frames() {
+            for source in 0..input.sources() {
+                let interpretation = interpretations.get(frame, source, 0);
+                let delay_samples = get_delay_samples(self.max_itd_nanos(), interpretation, input);
+                let delayed_sample = input.fractional_sample(frame, source, delay_samples);
+                let current_sample = input.sample(frame, source);
+                let sample_pair = [current_sample, delayed_sample];
+                for channel in 0u8..2 {
+                    let is_delayed_channel = (channel == 0) == interpretation.lr.is_sign_positive();
+                    let sample = sample_pair[is_delayed_channel as usize];
+                    let distance = self.normalize_distance(interpretation.distance);
+                    let dm = self.apply_distance_curve(distance) * self.distance_effect();
+                    let divergence = T::one() - dm;
+                    let gain: T = gain(channel, interpretation.lr * divergence);
+                    let gain_attenuated = self.pan_law.attenuate(gain);
+                    output.set_channel(frame, usize::from(channel), sample * gain_attenuated);
+                }
+            }
         }
+    }
+}
+
+impl<T, Law, D> AcceptableFrames for Processor<T, Law, D> {
+    fn acceptable_frames(&self, _sample_rate: u32, frames: usize) -> usize {
+        frames
+    }
+}
+
+impl<T, Law, D> MinimumFrames for Processor<T, Law, D> {
+    fn minimum_frames(&self, _sample_rate: u32) -> usize {
+        1
     }
 }
 
@@ -225,25 +238,6 @@ where
     let sample_rate = input.sample_rate();
     nanos_to_samples(delay_ns, sample_rate)
 }
-
-// fn cuboid_solve<T: SimdRealField + Copy>(position: Vector3<T>, extent: Vector3<T>) -> Vector3<T> {
-//     let position_abs = simd_abs(position);
-//     let mut plus = position_abs + extent;
-//     for i in plus.iter_mut() {
-//         i.simd_max(T::zero());
-//     }
-//     let plus = simd_abs(plus.normalize());
-//     let mut minus = position_abs - extent;
-//     for i in minus.iter_mut() {
-//         i.simd_max(T::zero());
-//     }
-//     let minus = simd_abs(minus.normalize());
-//     let mut divergence = Vector3::zeros();
-//     for ((plus, minus), d) in plus.iter().zip(minus.iter()).zip(divergence.iter_mut()) {
-//         *d = plus.simd_min(*minus);
-//     }
-//     divergence
-// }
 
 const NANOS_PER_SEC: u32 = 1_000_000_000;
 

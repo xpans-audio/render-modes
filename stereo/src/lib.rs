@@ -9,7 +9,7 @@ use num::{Float, FromPrimitive};
 use pan_law::PanLaw;
 use xpans::{Extent, Position};
 use xpans_common_lr::{FlipSign, gain};
-use xpans_render::prelude::*;
+use xpans_render::mode::*;
 
 /**
 Interprets audio sources based on their position within the scene.
@@ -21,27 +21,34 @@ setups as opposed to headphones.
 pub struct Positional<T> {
     phantom_data: PhantomData<T>,
 }
-impl<T> InterpretationLength for Positional<T> {
+impl<T: Default> InterpretationInfo for Positional<T> {
+    type Interpretation = T;
+
     fn interpretation_length(&self) -> usize {
         1
     }
 }
 
-impl<Source, T> InterpretSource<Source> for Positional<T>
+impl<S, I, T> InterpretSources<S, I> for Positional<T>
 where
-    T: SimdRealField + Copy,
-    Source: Position<T> + Extent<T>,
+    T: SimdRealField + Copy + Default,
+    I: Interpretations<T>,
+    S: Sources,
+    S::Source: Position<T> + Extent<T>,
 {
-    type Interpretation = T;
-
-    fn interpret_source(&mut self, source: &Source, result: &mut [Self::Interpretation]) {
-        let position = Vector3::new(source.pos_x(), source.pos_y(), source.pos_z());
-        let extent = Vector3::new(source.ext_x(), source.ext_y(), source.ext_z());
-        let bal_unclamped = (position.x.simd_abs() - extent.x)
-            .simd_max(T::zero())
-            .simd_copysign(position.x);
-        let bal = bal_unclamped.simd_min(T::one());
-        result[0] = bal;
+    fn interpret_sources(&mut self, sources: &S, result: &mut I) {
+        for frame in 0..sources.frames() {
+            for source in 0..sources.sources() {
+                let s = sources.get(frame, source);
+                let position = Vector3::new(s.pos_x(), s.pos_y(), s.pos_z());
+                let extent = Vector3::new(s.ext_x(), s.ext_y(), s.ext_z());
+                let bal_unclamped = (position.x.simd_abs() - extent.x)
+                    .simd_max(T::zero())
+                    .simd_copysign(position.x);
+                let bal = bal_unclamped.simd_min(T::one());
+                result.set(frame, source, 0, bal);
+            }
+        }
     }
 }
 
@@ -55,28 +62,36 @@ as opposed to typical stereo speaker setups.
 pub struct Directional<T> {
     phantom_data: PhantomData<T>,
 }
-impl<T> InterpretationLength for Directional<T> {
+
+impl<T: Default> InterpretationInfo for Directional<T> {
+    type Interpretation = T;
+
     fn interpretation_length(&self) -> usize {
         1
     }
 }
 
-impl<Source, T> InterpretSource<Source> for Directional<T>
+impl<S, I, T> InterpretSources<S, I> for Directional<T>
 where
-    T: SimdRealField + Copy,
-    Source: Position<T> + Extent<T>,
+    T: SimdRealField + Copy + Default,
+    I: Interpretations<T>,
+    S: Sources,
+    S::Source: Position<T> + Extent<T>,
 {
-    type Interpretation = T;
-
     /// NOTE: Extent has only been clumsily and incorrectly implemented.
-    fn interpret_source(&mut self, source: &Source, result: &mut [Self::Interpretation]) {
-        let position = Vector3::new(source.pos_x(), source.pos_y(), source.pos_z());
-        let extent = Vector3::new(source.ext_x(), source.ext_y(), source.ext_z());
-        let divergence = directional_cuboid_solve(position, extent);
-        let mut pos_norm = position;
-        pos_norm.normalize_mut();
-        let converged_balance = pos_norm.x * divergence.x;
-        result[0] = converged_balance;
+    fn interpret_sources(&mut self, sources: &S, result: &mut I) {
+        for frame in 0..sources.frames() {
+            for source in 0..sources.sources() {
+                let s = sources.get(frame, source);
+                let position = Vector3::new(s.pos_x(), s.pos_y(), s.pos_z());
+                let extent = Vector3::new(s.ext_x(), s.ext_y(), s.ext_z());
+                let divergence = directional_cuboid_solve(position, extent);
+                let mut pos_norm = position;
+                pos_norm.normalize_mut();
+                let converged_balance = pos_norm.x * divergence.x;
+                result.set(frame, source, 0, converged_balance);
+            }
+        }
     }
 }
 fn directional_cuboid_solve<T: SimdRealField + Copy>(
@@ -142,21 +157,42 @@ impl<T, Law> OutputChannels for Processor<T, Law> {
     }
 }
 
-impl<T, Law, In, Out> ProcessSamples<In, Out> for Processor<T, Law>
+impl<T: Default, Law> InterpretationInfo for Processor<T, Law> {
+    type Interpretation = T;
+
+    fn interpretation_length(&self) -> usize {
+        1
+    }
+}
+
+impl<T, Law, I, In, Out> ProcessSamples<I, In, Out> for Processor<T, Law>
 where
     Law: PanLaw<T>,
     In: Input<T>,
     Out: Output<T>,
-    T: Float + FlipSign + FromPrimitive,
+    I: Interpretations<T>,
+    T: Float + FlipSign + FromPrimitive + Default,
 {
-    type Interpretation = T;
-
-    fn process_samples(&mut self, result: &[T], input: &In, output: &mut Out) {
-        for channel in 0..2u8 {
-            let gain = gain(channel, result[0]);
-            let attenuated = self.pan_law.attenuate(gain);
-            let current_sample = input.current_sample();
-            output.set_channel(usize::from(channel), current_sample * attenuated);
+    fn process_samples(&mut self, result: &I, input: &In, output: &mut Out) {
+        for frame in 0..input.frames() {
+            for source in 0..input.sources() {
+                for channel in 0..2u8 {
+                    let gain = gain(channel, *result.get(frame, source, 0));
+                    let attenuated = self.pan_law.attenuate(gain);
+                    let current_sample = input.sample(frame, source);
+                    output.set_channel(frame, usize::from(channel), current_sample * attenuated);
+                }
+            }
         }
+    }
+}
+impl<T, Law> AcceptableFrames for Processor<T, Law> {
+    fn acceptable_frames(&self, _sample_rate: u32, frames: usize) -> usize {
+        frames
+    }
+}
+impl<T, Law> MinimumFrames for Processor<T, Law> {
+    fn minimum_frames(&self, _sample_rate: u32) -> usize {
+        1
     }
 }
