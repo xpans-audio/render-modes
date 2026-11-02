@@ -1,7 +1,8 @@
 /*!
 Implementation of xpans' Stereo rendering mode
 */
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
+
 use core::marker::PhantomData;
 pub mod pan_law;
 use nalgebra::{SimdRealField, Vector3};

@@ -9,9 +9,13 @@ homepage = "https://xpans.audio"
 repository = "https://github.com/xpans-audio/render-modes.git"
 authors = ["Ben Seigler"]
 
+[features]
+default = ["std"]
+std = ["xpans_common_lr/std", "nalgebra/std", "num/std"]
+
 [dependencies]
 xpans = "0.1.0"
 xpans_render = { git = "https://github.com/xpans-audio/xpans_render.git" }
-xpans_common_lr = { version = "0.1.2", path = "../common/lr" }
-nalgebra = "0.34.0"
-num = "0.4.3"
+xpans_common_lr = { version = "0.1.2", path = "../common/lr", default-features = false }
+nalgebra = { version = "0.34.0", default-features = false }
+num = { version = "0.4.3", default-features = false }
