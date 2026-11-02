@@ -2,6 +2,11 @@
 Shared traits and functions between Stereo and Headphones
 rendering modes in the xpans Ecosystem
 */
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(feature = "std")]
+mod std;
+
 use num::{Float, FromPrimitive, traits::FloatConst};
 
 /// -3 dB center attenuation with a square root taper
@@ -59,15 +64,6 @@ where
 /// Applies the pan law to the gain.
 pub trait PanLaw<T> {
     fn attenuate(&self, gain: T) -> T;
-}
-
-impl<V, T> PanLaw<V> for Box<T>
-where
-    T: PanLaw<V> + ?Sized,
-{
-    fn attenuate(&self, gain: V) -> V {
-        self.as_ref().attenuate(gain)
-    }
 }
 
 impl<T> PanLaw<T> for fn(T) -> T {
@@ -147,7 +143,7 @@ fn gain_half_sides() {
 #[cfg(test)]
 fn test_gain<T>(lr: T, desired_gains: [T; 2])
 where
-    T: std::fmt::Debug + FlipSign + Float + FromPrimitive,
+    T: core::fmt::Debug + FlipSign + Float + FromPrimitive,
 {
     let mut gains = [T::zero(); 2];
     for channel in 0u8..2 {
@@ -161,7 +157,7 @@ where
 #[cfg(test)]
 fn test_gain_both_sides<T>(lr: T, desired_gains: [T; 2])
 where
-    T: std::fmt::Debug + FlipSign + Float + FromPrimitive,
+    T: core::fmt::Debug + FlipSign + Float + FromPrimitive,
 {
     let mut reversed = desired_gains.clone();
     reversed.reverse();

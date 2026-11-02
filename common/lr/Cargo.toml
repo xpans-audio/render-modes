@@ -9,5 +9,9 @@ homepage = "https://xpans.audio"
 repository = "https://github.com/xpans-audio/render-modes.git"
 authors = ["Ben Seigler"]
 
+[features]
+default = ["std"]
+std = ["num/std"]
+
 [dependencies]
-num = "0.4.3"
+num = { version = "0.4.3", default-features = false }
