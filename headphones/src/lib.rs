@@ -3,6 +3,9 @@ Implementation of xpans' Headphones rendering mode
 */
 pub mod distance;
 pub mod pan_law;
+pub mod partitioned;
+pub mod sofa;
+mod upols;
 
 use crate::distance::{DistanceCurve, normalize_distance};
 use crate::pan_law::PanLaw;

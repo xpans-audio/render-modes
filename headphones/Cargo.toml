@@ -16,3 +16,5 @@ xpans_common_lr = { version = "0.1.2", path = "../common/lr" }
 nalgebra = "0.34.0"
 simba = { version = "0.9.1", features = ["wide"] }
 num = "0.4.3"
+sofar = "0.4.0"
+realfft = "3.5.1"

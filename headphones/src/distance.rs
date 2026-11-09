@@ -1,6 +1,59 @@
 //! Various distance curves
 use num::{Float, traits::FloatConst};
 
+/// Contains distance-related setting values
+pub struct DistanceSettings<T> {
+    distance_effect: T,
+    min_distance: T,
+    max_distance: T,
+}
+
+impl<T> DistanceSettings<T> {
+    pub fn new(distance_effect: T, min_distance: T, max_distance: T) -> Self {
+        Self {
+            distance_effect,
+            min_distance,
+            max_distance,
+        }
+    }
+
+    pub fn distance_effect(&self) -> &T {
+        &self.distance_effect
+    }
+
+    pub fn min_distance(&self) -> &T {
+        &self.min_distance
+    }
+
+    pub fn max_distance(&self) -> &T {
+        &self.max_distance
+    }
+
+    pub fn distance_effect_mut(&mut self) -> &mut T {
+        &mut self.distance_effect
+    }
+
+    pub fn min_distance_mut(&mut self) -> &mut T {
+        &mut self.min_distance
+    }
+
+    pub fn max_distance_mut(&mut self) -> &mut T {
+        &mut self.max_distance
+    }
+
+    pub fn set_distance_effect(&mut self, distance_effect: T) {
+        self.distance_effect = distance_effect;
+    }
+
+    pub fn set_min_distance(&mut self, min_distance: T) {
+        self.min_distance = min_distance;
+    }
+
+    pub fn set_max_distance(&mut self, max_distance: T) {
+        self.max_distance = max_distance;
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Linear;
 #[derive(Debug, Default)]
